@@ -1,19 +1,30 @@
-  # Refer Selenium with python documentation for details.
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, HttpUrl
+from scraper import fetch_data, extract_data
 
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys   # keys class keys in document i.e RETURN, F1, ALT etc.
-from selenium.webdriver.common.by import By       # By class locate element within document.
-import time
+app = FastAPI()
 
+# A simple homepage endpoint
+@app.get('/')
+def home():
+    return {'data': 'Welcome to the Web Scraper API!'}
 
+# Request schema for the scraper
+class ScraperRequest(BaseModel):
+    url: HttpUrl
 
-driver = webdriver.Chrome()     # Instance of chrome webdriver is created.
-driver.get("http:/www.python.org") # driver.get method will navigate page by URL.
-assert "Python" in driver.title  # Assertion to confirm title has word python in it.
-elem = driver.find_element(By.NAME, "q")
-elem.clear()
-elem.send_keys("pycon")
-elem.send_keys(Keys.RETURN)
-assert "No results found." not in driver.page_source
-time.sleep(6)
-driver.close()
+# The endpoint to accept URLs and return scraped data
+@app.post('/scrape')
+def scrape_data(request: ScraperRequest):
+    try:
+        # Use Selenium to fetch the page content
+        soup = fetch_data(str(request.url))
+        
+        # Extract paragraphs and titles
+        data = extract_data(soup)
+        
+        # Return the extracted data as JSON
+        return {"data": data}
+    except Exception as e:
+        # Return a 500 error if scraping fails
+        raise HTTPException(status_code=500, detail=f'An error occurred: {str(e)}')
