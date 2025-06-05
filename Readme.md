@@ -1,4 +1,4 @@
-# Dynamic Web Scraper API
+# Dynamic Web Scraper
 
 ## Technologies Used
 - **Python**: Core programming language for backend logic.
@@ -22,7 +22,7 @@
 
 ## Project Description
 
-- The **Dynamic Web Scraper API** is a dynamic tool that allows users to extract content from web pages. Unlike traditional scrapers that rely on static HTML, this API handles dynamic websites (those with JavaScript-rendered content) using Selenium WebDriver for rendering and BeautifulSoup for parsing the fully rendered HTML.
+- The **Dynamic Web Scraper** is a dynamic tool that allows users to extract content from web pages. Unlike traditional scrapers that rely on static HTML, this API handles dynamic websites (those with JavaScript-rendered content) using Selenium WebDriver for rendering and BeautifulSoup for parsing the fully rendered HTML.
 
 - It offers an easy-to-use API for fetching web content without requiring the user to manually inspect HTML elements. Simply provide the URL of the page, and the API returns titles and paragraphs in structured JSON format.
 
@@ -47,7 +47,7 @@ This scraper works well with websites that use JavaScript to render content, suc
 
 1. Clone the repository:
    ```bash
-   https://github.com/Abhimanyu-Gaurav/Dynamic-Web-Scraper-API
+   https://github.com/hermesdev0131/Dynamic-Web-Scraper
 
 2. Navigate to the project directory:
    ```bash
@@ -84,7 +84,7 @@ This scraper works well with websites that use JavaScript to render content, suc
     - Provide a JSON in the request body:
     ```json
     {
-        "url": "https://timesofindia.indiatimes.com/"
+        "url": "https://blog.saleslayer.com/"
     }
 
 6. Click on the "Execute" button to send the request.
@@ -105,7 +105,7 @@ This scraper works well with websites that use JavaScript to render content, suc
         - Paste the following JSON into the body:
         ```json
         {
-            "url": "https://timesofindia.indiatimes.com/"
+            "url": "https://blog.saleslayer.com/"
         }
 
     - Click the "Send" button to execute the request.
@@ -114,7 +114,7 @@ This scraper works well with websites that use JavaScript to render content, suc
 2. Using cURL:
 - Open your terminal and run:
     ```bash
-    curl -X POST "http://localhost:8000/scrape/" -H "Content-Type: application/json" -d '{"url": "https://timesofindia.indiatimes.com/"}'
+    curl -X POST "http://localhost:8000/scrape/" -H "Content-Type: application/json" -d '{"url": "https://blog.saleslayer.com/"}'
     
 - search: The term you want to search (e.g., business name or type).
 - total: The number of listings to retrieve (if available).
