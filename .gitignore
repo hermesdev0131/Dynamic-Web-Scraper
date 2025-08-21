@@ -18,6 +18,7 @@ ENV/
 
 # Python cache and compiled files
 __pycache__/
+*/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -84,6 +85,7 @@ coverage.xml
 
 # Zencoder
 .zencoder
+test_api.py
 
 # Temporary files
 *.tmp
@@ -95,5 +97,4 @@ tmp/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
-$RECYCLE.BIN/ 
-test_api.py
+$RECYCLE.BIN/

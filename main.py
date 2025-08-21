@@ -161,9 +161,10 @@ if __name__ == '__main__':
     print("=" * 60)
     
     # Run the Flask server
-    app.run(
-        host='0.0.0.0',  # Listen on all interfaces
-        port=5000,
-        debug=False,     # Set to False for production
-        threaded=True    # Enable threading for concurrent requests
-    )
+    app.run()
+    # app.run(
+    #     host='0.0.0.0',  # Listen on all interfaces
+    #     port=5000,
+    #     debug=False,     # Set to False for production
+    #     threaded=True    # Enable threading for concurrent requests
+    # )
