@@ -269,9 +269,24 @@ def extract_product_details_light(product_url, product_name):
             price_container = soup.select_one('.price__container')
             if price_container:
                 raw_price = price_container.get_text(strip=True)
-                formatted = format_price(raw_price)
-                if formatted:
-                    product_details['size_price_combinations'].append({'size': 'Standard', 'price': formatted})
+                # Normalize to $9.99 type string if possible
+                # Try extracting "X.YY" pattern or currency amount
+                m = re.search(r"\$\s*([0-9]+(?:\.[0-9]{2})?)", raw_price)
+                if m:
+                    price_text = f"${m.group(1)}"
+                else:
+                    # Fallback to format_price and then try to re-normalize commas/periods
+                    formatted = format_price(raw_price)
+                    # Convert possible EU-style to US-style for consistency with request
+                    if formatted:
+                        tmp = formatted.replace('€', '').strip()
+                        tmp = tmp.replace('.', '').replace(',', '.') if ',' in tmp and tmp.count(',') == 1 else tmp
+                        m2 = re.search(r"([0-9]+(?:\.[0-9]{2})?)", tmp)
+                        price_text = f"${m2.group(1)}" if m2 else formatted
+                    else:
+                        price_text = None
+                if price_text:
+                    product_details['size_price_combinations'].append({'size': 'Standard', 'price': price_text})
             return product_details
 
         # Currency symbol (default USD)
@@ -322,13 +337,13 @@ def extract_product_details_light(product_url, product_name):
                     'price': price_text
                 })
 
-        # Deduplicate
-        seen = set()
+        # Deduplicate by size only, keep first occurrence
+        seen_sizes = set()
         unique = []
         for combo in product_details['size_price_combinations']:
-            key = (combo['size'], combo['price'])
-            if key not in seen:
-                seen.add(key)
+            size = combo['size']
+            if size not in seen_sizes:
+                seen_sizes.add(size)
                 unique.append(combo)
         product_details['size_price_combinations'] = unique
         return product_details
