@@ -4,6 +4,9 @@ Enhanced scraper that:
 1. Extracts product names and URLs from collection pages
 2. Visits each product URL to extract prices and sizes
 3. Handles dynamic pricing based on size selection
+
+Includes a lightweight mode (no Selenium) suitable for low-memory environments
+by using requests + BeautifulSoup and parsing Shopify product JSON.
 """
 
 from selenium import webdriver
@@ -17,35 +20,332 @@ import time
 import json
 import csv
 import re
+import requests
+from urllib.parse import urljoin
+
 
 def setup_driver():
-    """Setup Chrome driver with options"""
+    """Setup Chrome driver with options (optimized for low-memory environments)"""
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
+    # Additional flags to reduce memory/CPU footprint
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-background-networking")
+    chrome_options.add_argument("--disable-background-timer-throttling")
+    chrome_options.add_argument("--disable-client-side-phishing-detection")
+    chrome_options.add_argument("--disable-default-apps")
+    chrome_options.add_argument("--disable-hang-monitor")
+    chrome_options.add_argument("--disable-popup-blocking")
+    chrome_options.add_argument("--disable-sync")
+    chrome_options.add_argument("--metrics-recording-only")
+    chrome_options.add_argument("--no-first-run")
+    chrome_options.add_argument("--safebrowsing-disable-auto-update")
+    chrome_options.add_argument("--disable-features=Translate,BackForwardCache,site-per-process")
+    chrome_options.add_argument("--blink-settings=imagesEnabled=false")
+    # Uncomment if absolutely needed in super constrained environments (can be unstable)
+    # chrome_options.add_argument("--single-process")
+    # chrome_options.add_argument("--no-zygote")
     return webdriver.Chrome(options=chrome_options)
+
 
 def format_price(price_text):
     """Format price to €X,XX format with comma/period conversion"""
     if not price_text:
         return None
-    
     # Extract numbers and currency symbols from the price text
-    # Remove any extra whitespace and non-price characters
-    cleaned_price = re.sub(r'[^\d.,€$£¥₹]', '', price_text.strip())
-    
-    # # Extract the numeric part (digits, commas, periods)
-    # numeric_match = re.search(r'[\d.,]+', cleaned_price)
-    # if not numeric_match:
-    #     return None
-    
-    # numeric_part = numeric_match.group()
+    cleaned_price = re.sub(r"[^\d.,€$£¥₹]", "", price_text.strip())
     numeric_part = cleaned_price
-    
+    # Swap separators for EU-style formatting
     numeric_part = numeric_part.replace('.', '#').replace(',', '.').replace('#', ',')
     return numeric_part
+
+
+# -----------------------------
+# Lightweight (no-Selenium) mode
+# -----------------------------
+
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    )
+}
+
+
+def _get(url, timeout=30):
+    """HTTP GET with sane headers and timeout."""
+    resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=timeout)
+    resp.raise_for_status()
+    return resp
+
+
+def extract_products_from_collection_light(url, max_pages=3, max_products=None):
+    """Extract product names and URLs from Shopify collection pages via HTTP.
+
+    - Uses page-based pagination (?page=N)
+    - Stops when no items found, after max_pages, or when max_products collected
+    """
+    all_products = []
+    page = 1
+    base = "https://www.rainshadowlabs.com"
+
+    while True:
+        if max_pages and page > max_pages:
+            break
+
+        page_url = url if page == 1 else (url + ("&" if "?" in url else "?") + f"page={page}")
+        try:
+            resp = _get(page_url, timeout=40)
+        except Exception as e:
+            print(f"Warning: failed to GET collection page {page}: {e}")
+            break
+
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        product_grid = soup.find('ul', id='product-grid')
+        if not product_grid:
+            # Try common alternative containers
+            product_grid = soup.select_one('ul.product-grid, div#product-grid, div.product-grid')
+        if not product_grid:
+            if page == 1:
+                print("Warning: Could not find product grid on first page")
+            break
+
+        items = product_grid.find_all('li') or product_grid.find_all('div', recursive=True)
+        page_products = []
+        for item in items:
+            link_elem = item.find('a', href=True)
+            if not link_elem:
+                continue
+            href = link_elem.get('href')
+            if not href:
+                continue
+            product_url = urljoin(base, href)
+
+            product_name = link_elem.get_text(strip=True)
+            if not product_name:
+                # Try nested elements
+                name_selectors = ['.product-title', '.product-name', 'h2', 'h3', 'h4', '.title']
+                for selector in name_selectors:
+                    name_elem = link_elem.select_one(selector) or item.select_one(selector)
+                    if name_elem:
+                        product_name = name_elem.get_text(strip=True)
+                        break
+
+            if product_name:
+                page_products.append({
+                    'name': product_name,
+                    'url': product_url
+                })
+
+            if max_products and (len(all_products) + len(page_products)) >= max_products:
+                break
+
+        if page_products:
+            all_products.extend(page_products)
+        else:
+            # No products on this page -> stop
+            break
+
+        if max_products and len(all_products) >= max_products:
+            break
+
+        page += 1
+
+    return all_products
+
+
+def _format_cents_to_price_text(cents, currency_symbol="$"):
+    """Convert integer cents to currency text like $10.00.
+    We'll pass it through format_price to match output style.
+    """
+    try:
+        amount = int(cents) / 100.0
+        return f"{currency_symbol}{amount:.2f}"
+    except Exception:
+        return None
+
+
+def _parse_shopify_product_json(soup):
+    """Try to parse Shopify product JSON from script tags."""
+    # Common patterns: script[type="application/json"][data-product],
+    # script#ProductJson-... or other theme-specific variations
+    for script in soup.find_all('script'):
+        t = (script.get('type') or '').lower()
+        if 'json' not in t:
+            continue
+        raw = script.string or script.get_text(strip=True)
+        if not raw:
+            continue
+        if '"variants"' not in raw and 'variants"' not in raw:
+            continue
+        try:
+            data = json.loads(raw)
+            # Some themes wrap under 'product'
+            if isinstance(data, dict) and 'variants' in data:
+                return data
+            if isinstance(data, dict) and 'product' in data and isinstance(data['product'], dict) and 'variants' in data['product']:
+                return data['product']
+        except Exception:
+            continue
+    return None
+
+
+def extract_product_details_light(product_url, product_name):
+    """Extract sizes and prices by parsing Shopify product JSON via HTTP.
+
+    Strategy:
+    1) Try the official Shopify product endpoint <product_url>.json (most reliable)
+    2) Fallback to parsing embedded JSON in the HTML
+    3) As a last resort, scrape a single price from .price__container
+    """
+    print(f"  [light] Extracting details for: {product_name}")
+
+    def _product_json_url(url: str) -> str:
+        # Build <product_url>.json (strip queries/fragments)
+        from urllib.parse import urlparse, urlunparse
+        p = urlparse(url)
+        path = p.path
+        if path.endswith('/'):
+            path = path[:-1]
+        if not path.endswith('.json'):
+            path = f"{path}.json"
+        return urlunparse((p.scheme, p.netloc, path, '', '', ''))
+
+    def _parse_price_cents(value):
+        # Normalize variant price to integer cents
+        try:
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                # Heuristic: small numbers like 7.0 => dollars; large like 700 => cents
+                return int(round(value * 100)) if value < 1000 else int(value)
+            if isinstance(value, str):
+                v = value.strip()
+                if v.isdigit():
+                    return int(v)
+                # Try float dollars
+                return int(round(float(v) * 100))
+        except Exception:
+            return None
+        return None
+
+    try:
+        product_details = {
+            'name': product_name,
+            'url': product_url,
+            'size_price_combinations': []
+        }
+
+        data = None
+        # 1) Try product JSON endpoint
+        try:
+            pj_url = _product_json_url(product_url)
+            pj_resp = _get(pj_url, timeout=40)
+            pj = pj_resp.json()
+            if isinstance(pj, dict) and 'product' in pj and isinstance(pj['product'], dict):
+                data = pj['product']
+            elif isinstance(pj, dict) and 'variants' in pj:
+                data = pj
+        except Exception:
+            data = None
+
+        soup = None
+        if not data:
+            # 2) Fallback to embedded JSON in HTML
+            resp = _get(product_url, timeout=40)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            data = _parse_shopify_product_json(soup)
+
+        if not data:
+            # 3) Last resort: read a single price from page
+            if soup is None:
+                resp = _get(product_url, timeout=40)
+                soup = BeautifulSoup(resp.text, 'html.parser')
+            price_container = soup.select_one('.price__container')
+            if price_container:
+                raw_price = price_container.get_text(strip=True)
+                formatted = format_price(raw_price)
+                if formatted:
+                    product_details['size_price_combinations'].append({'size': 'Standard', 'price': formatted})
+            return product_details
+
+        # Currency symbol (default USD)
+        currency_symbol = '$'
+
+        variants = data.get('variants', []) if isinstance(data, dict) else []
+        options = data.get('options', []) if isinstance(data, dict) else []
+
+        # Determine which option index represents size (if any)
+        size_option_index = None
+        if options:
+            # Shopify .json typically has list of dicts: [{'name': 'Size', ...}, ...]
+            if isinstance(options[0], dict):
+                for i, opt in enumerate(options):
+                    if str(opt.get('name', '')).strip().lower() == 'size':
+                        size_option_index = i  # 0-based
+                        break
+
+        for v in variants:
+            # Prefer explicit size option if present
+            size_text = None
+            if size_option_index is not None:
+                size_text = v.get(f'option{size_option_index + 1}')
+
+            # Fallbacks
+            if not size_text:
+                size_text = (
+                    v.get('option1') or v.get('option2') or v.get('option3') or v.get('title') or 'Variant'
+                )
+
+            # Clean size text
+            if isinstance(size_text, str):
+                if size_text.lower() == 'default title':
+                    size_text = 'Standard'
+                if 'sample' in size_text.lower():
+                    size_text = size_text.replace('sample', '').replace('Sample', '').strip()
+
+            # Price normalization
+            price_cents = _parse_price_cents(v.get('price'))
+            if price_cents is None:
+                price_cents = _parse_price_cents(v.get('price_cents'))
+
+            if price_cents is not None:
+                price_text = _format_cents_to_price_text(price_cents, currency_symbol)
+                formatted_price = format_price(price_text)
+                product_details['size_price_combinations'].append({
+                    'size': size_text,
+                    'price': formatted_price
+                })
+
+        # Deduplicate
+        seen = set()
+        unique = []
+        for combo in product_details['size_price_combinations']:
+            key = (combo['size'], combo['price'])
+            if key not in seen:
+                seen.add(key)
+                unique.append(combo)
+        product_details['size_price_combinations'] = unique
+        return product_details
+
+    except Exception as e:
+        print(f"    [light] Error extracting details from {product_url}: {e}")
+        return {
+            'name': product_name,
+            'url': product_url,
+            'size_price_combinations': [],
+            'error': str(e)
+        }
+
+
+# -----------------------------
+# Original Selenium-based helpers
+# -----------------------------
 
 def extract_products_from_collection(driver, url):
     """Extract product names and URLs from collection page with pagination"""
@@ -195,6 +495,7 @@ def extract_products_from_collection(driver, url):
     
     return all_products
 
+
 def extract_product_details(driver, product_url, product_name):
     """Extract prices and sizes from individual product page with specific selectors"""
     print(f"  Extracting details for: {product_name}")
@@ -244,7 +545,6 @@ def extract_product_details(driver, product_url, product_name):
                         
                         if "sample" in size_text.lower():
                             size_text = size_text.replace("sample", "").replace("Sample", "").strip()
-
 
                         # Filter out "sample" text and clean the size text
                         print(f"    Processing size: {size_text}")
@@ -334,6 +634,7 @@ def extract_product_details(driver, product_url, product_name):
             'error': str(e)
         }
 
+
 def main():
     """Main scraping function"""
     collection_urls = [
@@ -381,39 +682,6 @@ def main():
         # Use all products from all collections
         detailed_products = all_detailed_products
         
-        # # Step 3: Save results
-        # print(f"\n💾 Step 3: Saving results...")
-        
-        # # Save to JSON
-        # json_file = '/home/hermes/Documents/work/Dynamic-Web-Scraper/detailed_products.json'
-        # with open(json_file, 'w', encoding='utf-8') as f:
-        #     json.dump({
-        #         "collection_urls": collection_urls,
-        #         "total_collections": len(collection_urls),
-        #         "total_products": len(detailed_products),
-        #         "scraped_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        #         "products": detailed_products
-        #     }, f, indent=2, ensure_ascii=False)
-        
-        # print(f"✅ JSON saved: {json_file}")
-        
-        # Save to CSV
-        # csv_file = '/home/hermes/Documents/work/Dynamic-Web-Scraper/detailed_products.csv'
-        # with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-        #     writer = csv.writer(f)
-        #     writer.writerow(['Product Name', 'URL', 'Size-Price Combinations'])
-            
-        #     for product in detailed_products:
-        #         combinations_str = '; '.join([f"{combo['size']}: {combo['price']}" for combo in product['size_price_combinations']])
-                
-        #         writer.writerow([
-        #             product['name'],
-        #             product['url'],
-        #             combinations_str
-        #         ])
-        
-        # print(f"✅ CSV saved: {csv_file}")
-        
         # Print summary
         print(f"\n📊 Summary:")
         print(f"   Total products processed: {len(detailed_products)}")
@@ -440,6 +708,7 @@ def main():
     finally:
         driver.quit()
         print(f"\n🏁 Scraping completed!")
+
 
 if __name__ == "__main__":
     main()

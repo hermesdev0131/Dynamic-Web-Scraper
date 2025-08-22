@@ -15,10 +15,12 @@ import sys
 
 # Import our scraping functions
 from scraper import (
-    setup_driver, 
-    extract_products_from_collection, 
+    setup_driver,
+    extract_products_from_collection,
     extract_product_details,
-    format_price
+    extract_products_from_collection_light,
+    extract_product_details_light,
+    format_price,
 )
 
 # Configure logging
@@ -89,32 +91,60 @@ def scrape():
         # Run scraping synchronously
         scraping_status['is_running'] = True
         scraping_status['error'] = None
-        
-        driver = setup_driver()
+
+        # Lightweight mode defaults to True for low-memory envs like Render free tier
+        use_light = bool(data.get('light', True))
+        max_pages = int(data.get('max_pages', 2))
+        max_products = data.get('max_products')
+        if max_products is not None:
+            try:
+                max_products = int(max_products)
+            except Exception:
+                max_products = None
+
         all_detailed_products = []
-        
+
         try:
-            # Process each collection URL
-            for collection_idx, collection_url in enumerate(collection_urls, 1):
-                logging.info(f"Processing collection {collection_idx}/{len(collection_urls)}: {collection_url}")
-                
-                # Extract products from collection pages
-                products = extract_products_from_collection(driver, collection_url)
-                logging.info(f"Found {len(products)} products in collection")
-                
-                if not products:
-                    logging.warning(f"No products found in collection: {collection_url}")
-                    continue
-                
-                # Extract details from each product page
-                for i, product in enumerate(products, 1):
-                    logging.info(f"Processing product {i}/{len(products)}: {product['name']}")
-                    details = extract_product_details(driver, product['url'], product['name'])
-                    all_detailed_products.append(details)
-                    
-                    # Small delay to be respectful
-                    time.sleep(1)
-            
+            if use_light:
+                # Light path (no Selenium)
+                for collection_idx, collection_url in enumerate(collection_urls, 1):
+                    logging.info(f"[light] Processing collection {collection_idx}/{len(collection_urls)}: {collection_url}")
+                    products = extract_products_from_collection_light(
+                        collection_url, max_pages=max_pages, max_products=max_products
+                    )
+                    logging.info(f"[light] Found {len(products)} products in collection")
+
+                    if not products:
+                        logging.warning(f"[light] No products found in collection: {collection_url}")
+                        continue
+
+                    for i, product in enumerate(products, 1):
+                        logging.info(f"[light] Processing product {i}/{len(products)}: {product['name']}")
+                        details = extract_product_details_light(product['url'], product['name'])
+                        all_detailed_products.append(details)
+                        time.sleep(0.2)
+            else:
+                # Selenium path
+                driver = setup_driver()
+                try:
+                    for collection_idx, collection_url in enumerate(collection_urls, 1):
+                        logging.info(f"Processing collection {collection_idx}/{len(collection_urls)}: {collection_url}")
+
+                        products = extract_products_from_collection(driver, collection_url)
+                        logging.info(f"Found {len(products)} products in collection")
+
+                        if not products:
+                            logging.warning(f"No products found in collection: {collection_url}")
+                            continue
+
+                        for i, product in enumerate(products, 1):
+                            logging.info(f"Processing product {i}/{len(products)}: {product['name']}")
+                            details = extract_product_details(driver, product['url'], product['name'])
+                            all_detailed_products.append(details)
+                            time.sleep(1)
+                finally:
+                    driver.quit()
+
             # Prepare final result
             result = {
                 'collection_urls': collection_urls,
@@ -122,18 +152,20 @@ def scrape():
                 'total_products': len(all_detailed_products),
                 'scraped_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'products': all_detailed_products,
-                'status': 'completed'
+                'status': 'completed',
+                'mode': 'light' if use_light else 'selenium',
+                'limits': {'max_pages': max_pages, 'max_products': max_products},
             }
-            
+
             scraping_status['last_result'] = result
             scraping_status['last_run'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            
-            logging.info(f"Synchronous scraping completed successfully. Total products: {len(all_detailed_products)}")
-            
+
+            logging.info(
+                f"Scraping completed successfully in {result['mode']} mode. Total products: {len(all_detailed_products)}"
+            )
+
             return jsonify(result)
-            
         finally:
-            driver.quit()
             scraping_status['is_running'] = False
             
     except Exception as e:
