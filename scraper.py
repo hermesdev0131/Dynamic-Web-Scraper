@@ -316,10 +316,10 @@ def extract_product_details_light(product_url, product_name):
 
             if price_cents is not None:
                 price_text = _format_cents_to_price_text(price_cents, currency_symbol)
-                formatted_price = format_price(price_text)
+                # formatted_price = format_price(price_text)
                 product_details['size_price_combinations'].append({
                     'size': size_text,
-                    'price': formatted_price
+                    'price': price_text
                 })
 
         # Deduplicate
