@@ -21,6 +21,7 @@ from scraper import (
     extract_products_from_collection_light,
     extract_product_details_light,
     format_price,
+    extract_products_from_JSON
 )
 
 # Configure logging
@@ -74,8 +75,8 @@ def scrape():
         
         # Default collection URLs
         default_urls = [
-            "https://www.rainshadowlabs.com/collections/hair-care"
-            # "https://www.rainshadowlabs.com/collections/cleansers"
+            "https://www.rainshadowlabs.com/collections/hair-care/products.json",
+            "https://www.rainshadowlabs.com/collections/cleansers/products.json"
         ]
         
         collection_urls = data.get('collection_urls', default_urls)
@@ -94,35 +95,45 @@ def scrape():
 
         # Lightweight mode defaults to True for low-memory envs like Render free tier
         use_light = bool(data.get('light', True))
-        max_pages = int(data.get('max_pages', 2))
-        max_products = data.get('max_products')
-        if max_products is not None:
-            try:
-                max_products = int(max_products)
-            except Exception:
-                max_products = None
+        # max_pages = int(data.get('max_pages', 10))
+        # max_products = data.get('max_products')
+        # if max_products is not None:
+        #     try:
+        #         max_products = int(max_products)
+        #     except Exception:
+        #         max_products = None
 
         all_detailed_products = []
 
         try:
             if use_light:
-                # Light path (no Selenium)
+                # # Light path (no Selenium)
+                # for collection_idx, collection_url in enumerate(collection_urls, 1):
+                #     logging.info(f"[light] Processing collection {collection_idx}/{len(collection_urls)}: {collection_url}")
+                #     products = extract_products_from_collection_light(
+                #         collection_url, max_pages=max_pages, max_products=max_products
+                #     )
+                #     logging.info(f"[light] Found {len(products)} products in collection")
+
+                #     if not products:
+                #         logging.warning(f"[light] No products found in collection: {collection_url}")
+                #         continue
+
+                #     for i, product in enumerate(products, 1):
+                #         logging.info(f"[light] Processing product {i}/{len(products)}: {product['name']}")
+                #         details = extract_product_details_light(product['url'], product['name'])
+                #         all_detailed_products.append(details)
+                #         time.sleep(0.2)
                 for collection_idx, collection_url in enumerate(collection_urls, 1):
                     logging.info(f"[light] Processing collection {collection_idx}/{len(collection_urls)}: {collection_url}")
-                    products = extract_products_from_collection_light(
-                        collection_url, max_pages=max_pages, max_products=max_products
-                    )
+                    products = extract_products_from_JSON(collection_url)
                     logging.info(f"[light] Found {len(products)} products in collection")
-
                     if not products:
                         logging.warning(f"[light] No products found in collection: {collection_url}")
                         continue
+                    all_detailed_products.append(products)
+                    time.sleep(0.2)
 
-                    for i, product in enumerate(products, 1):
-                        logging.info(f"[light] Processing product {i}/{len(products)}: {product['name']}")
-                        details = extract_product_details_light(product['url'], product['name'])
-                        all_detailed_products.append(details)
-                        time.sleep(0.2)
             else:
                 # Selenium path
                 driver = setup_driver()
@@ -146,6 +157,7 @@ def scrape():
                     driver.quit()
 
             # Prepare final result
+            
             result = {
                 'collection_urls': collection_urls,
                 'total_collections': len(collection_urls),
@@ -154,7 +166,6 @@ def scrape():
                 'products': all_detailed_products,
                 'status': 'completed',
                 'mode': 'light' if use_light else 'selenium',
-                'limits': {'max_pages': max_pages, 'max_products': max_products},
             }
 
             scraping_status['last_result'] = result

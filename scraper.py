@@ -81,6 +81,40 @@ def _get(url, timeout=30):
     resp.raise_for_status()
     return resp
 
+def extract_products_from_JSON(url):
+    all_products = []
+    page = 1
+
+    while True:
+        response = requests.get(f"{url}?page={page}")
+        if response.status_code != 200:
+            print(f"Failed to fetch page {page}: Status code {response.status_code}")
+            break
+
+        data = response.json()
+        products = data.get("products", [])
+
+        if not products:
+            print("No more products found, ending.")
+            break
+
+        for product in products:
+            product_name = product.get("title", "Unnamed Product")
+
+            for variant in product.get("variants", []):
+                size = variant.get("title", "Default")
+                size_clean = size.lower().replace("sample", "").strip()
+                price = float(variant.get("price", 0))
+                price_with_unit = f"${price:.2f}"
+                all_products.append({
+                    "name": product_name,
+                    "size": size_clean,
+                    "price": price_with_unit
+                })
+
+        print(f"Page {page} processed, collected {len(products)} products.")
+        page += 1
+    return all_products
 
 def extract_products_from_collection_light(url, max_pages=3, max_products=None):
     """Extract product names and URLs from Shopify collection pages via HTTP.
@@ -134,7 +168,7 @@ def extract_products_from_collection_light(url, max_pages=3, max_products=None):
                         product_name = name_elem.get_text(strip=True)
                         break
 
-            if product_name:
+            if product_name and product_name.strip().lower() != 'remove all':
                 page_products.append({
                     'name': product_name,
                     'url': product_url
@@ -295,7 +329,7 @@ def extract_product_details_light(product_url, product_name):
         variants = data.get('variants', []) if isinstance(data, dict) else []
         options = data.get('options', []) if isinstance(data, dict) else []
 
-        # Determine which option index represents size (if any)
+        # Determine which option index represents size (`if any)
         size_option_index = None
         if options:
             # Shopify .json typically has list of dicts: [{'name': 'Size', ...}, ...]
@@ -433,8 +467,10 @@ def extract_products_from_collection(driver, url):
                             product_info['name'] = name_elem.get_text(strip=True)
                             break
                 
-                # Only add products that have both name and URL
+                # Only add products that have both name and URL, and skip 'remove all'
                 if product_info.get('name') and product_info.get('url'):
+                    if product_info['name'].strip().lower() == 'remove all':
+                        continue
                     page_products.append(product_info)
             
             if page_products:
