@@ -81,6 +81,14 @@ def _get(url, timeout=30):
     resp.raise_for_status()
     return resp
 
+def clean_size(size_part):
+    """
+    Extract only the number and unit from size string
+    """
+    size_part = size_part.lower().replace("sample", "").strip()
+    match = re.search(r"[\d\.]+\s*[a-zA-Z]+", size_part)
+    return match.group(0) if match else size_part.title()
+
 def extract_products_from_JSON(url):
     all_products = []
     page = 1
@@ -102,12 +110,22 @@ def extract_products_from_JSON(url):
             product_name = product.get("title", "Unnamed Product")
 
             for variant in product.get("variants", []):
-                size = variant.get("title", "Default")
-                size_clean = size.lower().replace("sample", "").strip()
+                variant_title = variant.get("title", "Default")
+
+                # Check if variant includes scent/description
+                if "/" in variant_title:
+                    desc, size_raw = map(str.strip, variant_title.split("/", 1))
+                    final_name = f"{product_name} — {desc}"
+                    size_clean = clean_size(size_raw)
+                else:
+                    final_name = product_name
+                    size_clean = clean_size(variant_title) if variant_title != "Default" else variant_title
+
                 price = float(variant.get("price", 0))
                 price_with_unit = f"${price:.2f}"
+
                 all_products.append({
-                    "name": product_name,
+                    "name": final_name,
                     "size": size_clean,
                     "price": price_with_unit
                 })
